@@ -7,7 +7,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  CLUSTER_NAME: tic-tac-toe-cluster
+  CLUSTER_NAME: tic-tac-toe-clusters
   ECR_REPO_NAME: tic-tac-toe
   DEPLOYMENT_NAME: tic-tac-toe-deployment
 
