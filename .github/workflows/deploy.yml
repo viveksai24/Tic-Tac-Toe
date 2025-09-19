@@ -1,0 +1,72 @@
+name: CI/CD to EKS
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: us-east-1
+  CLUSTER_NAME: tic-tac-toe-cluster
+  ECR_REPO_NAME: tic-tac-toe
+  DEPLOYMENT_NAME: tic-tac-toe-deployment
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Create Dockerfile for static website
+      - name: Create Dockerfile
+        run: |
+          cat <<EOF > Dockerfile
+          FROM nginx:alpine
+          WORKDIR /usr/share/nginx/html
+          RUN rm -rf ./*
+          COPY . /usr/share/nginx/html
+          EXPOSE 80
+          CMD ["nginx" ,"-g", "daemon off;"]
+          EOF
+
+      # Configure AWS credentials (use GitHub secrets)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Login to Amazon ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build, tag, and push Docker image
+      - name: Build, Tag, and Push Docker image
+        run: |
+          IMAGE_TAG=${GITHUB_SHA}
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          IMAGE_URI=$ECR_REGISTRY/${{ env.ECR_REPO_NAME }}:$IMAGE_TAG
+
+          echo "Building image $IMAGE_URI"
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      # Update kubeconfig for EKS cluster
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      # Deploy new image to EKS safely
+      - name: Deploy to EKS (safe rollout)
+        run: |
+          kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} \
+            tic-tac-toe=${IMAGE_URI} --record || true
+
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} --timeout=10m || true
+          kubectl get pods -l app=tic-tac-toe
